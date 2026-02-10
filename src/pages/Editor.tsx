@@ -345,64 +345,70 @@ const Editor = () => {
       ctx.filter = 'none';
 
       // Draw markup if any
-      if (markupState.drawings.length > 0 && imageRef.current && containerRef.current) {
-        // Get the displayed image dimensions on screen
-        const imageDisplayRect = imageRef.current.getBoundingClientRect();
-        const containerRect = containerRef.current.getBoundingClientRect();
+      if (markupState.drawings.length > 0) {
+        // Scale from display canvas coordinates to original image coordinates
+        // The markup canvas matches the container size, need to map to original image
+        const imageDisplayRect = imageRef.current?.getBoundingClientRect();
+        const containerRect = containerRef.current?.getBoundingClientRect();
 
-        // Calculate scale factors from display coordinates to actual image coordinates
-        const scaleX = imageRef.current.naturalWidth / imageDisplayRect.width;
-        const scaleY = imageRef.current.naturalHeight / imageDisplayRect.height;
+        if (imageDisplayRect && containerRect) {
+          // Calculate the scale from display size to original image size
+          const displayWidth = imageDisplayRect.width;
+          const displayHeight = imageDisplayRect.height;
+          const scaleX = img.width / displayWidth;
+          const scaleY = img.height / displayHeight;
 
-        // Calculate offset of image within container (for centering)
-        const offsetX = (imageDisplayRect.left - containerRect.left) / containerRect.width;
-        const offsetY = (imageDisplayRect.top - containerRect.top) / containerRect.height;
+          markupState.drawings.forEach(drawing => {
+            ctx.strokeStyle = drawing.color;
+            ctx.fillStyle = drawing.color;
+            ctx.lineWidth = drawing.strokeWidth;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
 
-        markupState.drawings.forEach(drawing => {
-          ctx.strokeStyle = drawing.color;
-          ctx.fillStyle = drawing.color;
-          ctx.lineWidth = drawing.strokeWidth;
-          ctx.lineCap = 'round';
-          ctx.lineJoin = 'round';
+            // Map from canvas overlay coordinates to original image coordinates
+            // Canvas overlay position relative to container
+            const offsetX = imageDisplayRect.left - containerRect.left;
+            const offsetY = imageDisplayRect.top - containerRect.top;
 
-          // Convert from canvas display coordinates to original image coordinates
-          const canvasX = drawing.x - (offsetX * containerRect.width);
-          const canvasY = drawing.y - (offsetY * containerRect.height);
-          const canvasX2 = (drawing.x2 || drawing.x) - (offsetX * containerRect.width);
-          const canvasY2 = (drawing.y2 || drawing.y) - (offsetY * containerRect.height);
+            // Convert from canvas display space to original image space
+            const imgX = (drawing.x - offsetX) * scaleX;
+            const imgY = (drawing.y - offsetY) * scaleY;
+            const imgX2 = ((drawing.x2 || drawing.x) - offsetX) * scaleX;
+            const imgY2 = ((drawing.y2 || drawing.y) - offsetY) * scaleY;
 
-          // Scale to actual image dimensions and account for crop
-          const x = (canvasX * scaleX) - drawX;
-          const y = (canvasY * scaleY) - drawY;
-          const x2 = (canvasX2 * scaleX) - drawX;
-          const y2 = (canvasY2 * scaleY) - drawY;
+            // Adjust for crop if applied
+            const finalX = imgX - drawX;
+            const finalY = imgY - drawY;
+            const finalX2 = imgX2 - drawX;
+            const finalY2 = imgY2 - drawY;
 
-          switch (drawing.tool) {
-            case 'circle': {
-              const radius = Math.sqrt(Math.pow(x2 - x, 2) + Math.pow(y2 - y, 2));
-              ctx.beginPath();
-              ctx.arc(x, y, radius, 0, 2 * Math.PI);
-              ctx.stroke();
-              break;
+            switch (drawing.tool) {
+              case 'circle': {
+                const radius = Math.sqrt(Math.pow(finalX2 - finalX, 2) + Math.pow(finalY2 - finalY, 2));
+                ctx.beginPath();
+                ctx.arc(finalX, finalY, radius, 0, 2 * Math.PI);
+                ctx.stroke();
+                break;
+              }
+              case 'rectangle': {
+                ctx.strokeRect(finalX, finalY, finalX2 - finalX, finalY2 - finalY);
+                break;
+              }
+              case 'line': {
+                ctx.beginPath();
+                ctx.moveTo(finalX, finalY);
+                ctx.lineTo(finalX2, finalY2);
+                ctx.stroke();
+                break;
+              }
+              case 'text': {
+                ctx.font = `${drawing.strokeWidth * 4}px Arial`;
+                ctx.fillText(drawing.text || '', finalX, finalY);
+                break;
+              }
             }
-            case 'rectangle': {
-              ctx.strokeRect(x, y, x2 - x, y2 - y);
-              break;
-            }
-            case 'line': {
-              ctx.beginPath();
-              ctx.moveTo(x, y);
-              ctx.lineTo(x2, y2);
-              ctx.stroke();
-              break;
-            }
-            case 'text': {
-              ctx.font = `${drawing.strokeWidth * 4}px Arial`;
-              ctx.fillText(drawing.text || '', x, y);
-              break;
-            }
-          }
-        });
+          });
+        }
       }
 
       // Trigger download
