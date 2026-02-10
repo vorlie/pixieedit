@@ -3,6 +3,11 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import useDynamicColor from '../hooks/useDynamicColor';
 import { db, type AdjustmentKey, type CropState } from '../db/db';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { ADJUSTMENT_TOOLS, CROP_TOOLS, CROP_TOOLS_MOBILE, PRESET_PRESETS, MAIN_TABS } from '../config/tools';
+import { useMarkupState } from '../hooks/useMarkupState';
+import { MarkupCanvas } from '../components/MarkupCanvas';
+import { MarkupTools } from '../components/MarkupTools';
+import { StatusBar } from '../components/StatusBar';
 
 const Editor = () => {
   const location = useLocation();
@@ -28,10 +33,14 @@ const Editor = () => {
   const [activeAdjustTool, setActiveAdjustTool] = useState<AdjustmentKey>('brightness');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  
+  const markupState = useMarkupState();
 
   // Initialize from DB when image loads
   useEffect(() => {
     if (pixieImage?.edits) {
+      // eslint-disable-next-line
       setAdjustments(pixieImage.edits);
       setCrop(pixieImage.edits.crop);
     }
@@ -96,11 +105,12 @@ const Editor = () => {
       let { x, y, width, height } = dragInitialCrop;
 
       switch (dragType) {
-        case 'move':
+        case 'move': {
           x = Math.max(0, Math.min(100 - width, x + dxPercent));
           y = Math.max(0, Math.min(100 - height, y + dyPercent));
           break;
-        case 'corner-tl':
+        }
+        case 'corner-tl': {
           const newX_tl = Math.max(0, Math.min(x + width - 5, x + dxPercent));
           const newY_tl = Math.max(0, Math.min(y + height - 5, y + dyPercent));
           width += (x - newX_tl);
@@ -108,38 +118,46 @@ const Editor = () => {
           x = newX_tl;
           y = newY_tl;
           break;
-        case 'corner-tr':
+        }
+        case 'corner-tr': {
           const newY_tr = Math.max(0, Math.min(y + height - 5, y + dyPercent));
           width = Math.max(5, Math.min(100 - x, width + dxPercent));
           height += (y - newY_tr);
           y = newY_tr;
           break;
-        case 'corner-bl':
+        }
+        case 'corner-bl': {
           const newX_bl = Math.max(0, Math.min(x + width - 5, x + dxPercent));
           width += (x - newX_bl);
           height = Math.max(5, Math.min(100 - y, height + dyPercent));
           x = newX_bl;
           break;
-        case 'corner-br':
+        }
+        case 'corner-br': {
           width = Math.max(5, Math.min(100 - x, width + dxPercent));
           height = Math.max(5, Math.min(100 - y, height + dyPercent));
           break;
-        case 'side-l':
+        }
+        case 'side-l': {
           const resX_l = Math.max(0, Math.min(x + width - 5, x + dxPercent));
           width += (x - resX_l);
           x = resX_l;
           break;
-        case 'side-r':
+        }
+        case 'side-r': {
           width = Math.max(5, Math.min(100 - x, width + dxPercent));
           break;
-        case 'side-t':
+        }
+        case 'side-t': {
           const resY_t = Math.max(0, Math.min(y + height - 5, y + dyPercent));
           height += (y - resY_t);
           y = resY_t;
           break;
-        case 'side-b':
+        }
+        case 'side-b': {
           height = Math.max(5, Math.min(100 - y, height + dyPercent));
           break;
+        }
       }
 
       return { x, y, width, height };
@@ -184,15 +202,13 @@ const Editor = () => {
     });
   };
 
-  const initCrop = () => {
-    if (!crop) {
+  
+  useEffect(() => {
+    if (activeTab === 'crop' && !crop) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCrop({ x: 10, y: 10, width: 80, height: 80 });
     }
-  };
-
-  useEffect(() => {
-    if (activeTab === 'crop') initCrop();
-  }, [activeTab]);
+  }, [activeTab, crop]);
 
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
 
@@ -370,7 +386,7 @@ const Editor = () => {
             </button>
             <button 
                 onClick={handleExport}
-                className="px-6 py-2 bg-primary rounded-full text-on-primary font-medium text-sm shadow-sm hover:brightness-110 active:scale-95 transition-all text-xs lg:text-sm"
+                className="px-6 py-2 bg-primary rounded-full text-on-primary font-medium shadow-sm hover:brightness-110 active:scale-95 transition-all text-sm lg:text-base"
             >
                 Save copy
             </button>
@@ -383,6 +399,7 @@ const Editor = () => {
           <div className="relative w-full h-full flex items-center justify-center">
             {imageUrl && (
               <div 
+                ref={containerRef}
                 className="relative max-w-full max-h-full shadow-2xl rounded-lg lg:rounded-xl overflow-hidden"
                 style={{ 
                    aspectRatio: imageSize ? `${imageSize.width} / ${imageSize.height}` : 'auto',
@@ -476,6 +493,14 @@ const Editor = () => {
                     />
                   </div>
                 )}
+
+                {/* Markup Canvas */}
+                {activeTab === 'markup' && (
+                  <>
+                    <MarkupCanvas imageRef={imageRef} containerRef={containerRef} markupState={markupState} />
+                    <MarkupTools markupState={markupState} />
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -486,13 +511,7 @@ const Editor = () => {
             <div className="flex flex-col gap-8">
                 {/* Desktop Tabs */}
                 <div className="grid grid-cols-2 gap-2">
-                    {[
-                        { id: 'suggestions', label: 'Suggestions', icon: 'magic_button' },
-                        { id: 'crop', label: 'Crop', icon: 'crop' },
-                        { id: 'adjust', label: 'Adjust', icon: 'tune' },
-                        { id: 'filters', label: 'Filters', icon: 'filter_vintage' },
-                        { id: 'markup', label: 'Markup', icon: 'brush' },
-                    ].map((tab) => (
+                    {MAIN_TABS.map((tab) => (
                         <button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
@@ -512,12 +531,7 @@ const Editor = () => {
                 <div className="flex flex-col gap-6">
                     {activeTab === 'adjust' && (
                         <div className="flex flex-col gap-6">
-                            {[
-                                { id: 'brightness', label: 'Brightness', icon: 'light_mode' },
-                                { id: 'contrast', label: 'Contrast', icon: 'contrast' },
-                                { id: 'saturation', label: 'Saturation', icon: 'invert_colors' },
-                                { id: 'warmth', label: 'Warmth', icon: 'thermostat' },
-                            ].map((tool) => (
+                            {ADJUSTMENT_TOOLS.map((tool) => (
                                 <div key={tool.id} className="flex flex-col gap-3 p-4 bg-surface-variant/20 rounded-2xl">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
@@ -544,7 +558,7 @@ const Editor = () => {
 
                     {activeTab === 'suggestions' && (
                         <div className="grid grid-cols-1 gap-3">
-                            {['Default', 'Vivid', 'Warm', 'Cool', 'Mono'].map((preset) => (
+                            {PRESET_PRESETS.map((preset) => (
                                 <button 
                                     key={preset} 
                                     onClick={() => applyPreset(preset)}
@@ -556,40 +570,50 @@ const Editor = () => {
                         </div>
                     )}
 
+                    {activeTab === 'markup' && (
+                        <div className="flex flex-col gap-4">
+                            <button
+                                onClick={() => markupState.setMarkupEnabled(!markupState.markupEnabled)}
+                                className={`w-full py-4 px-4 rounded-2xl font-medium transition-all ${
+                                    markupState.markupEnabled
+                                        ? 'bg-primary text-on-primary'
+                                        : 'bg-surface-variant/30 text-on-surface hover:bg-surface-variant/50'
+                                }`}
+                            >
+                                {markupState.markupEnabled ? 'Hide Drawing Tools' : 'Show Drawing Tools'}
+                            </button>
+                        </div>
+                    )}
+
                     {activeTab === 'crop' && crop && (
                         <div className="flex flex-col gap-6">
-                            {[
-                                { id: 'x', label: 'Initial X', icon: 'align_horizontal_left' },
-                                { id: 'y', label: 'Initial Y', icon: 'align_vertical_top' },
-                                { id: 'width', label: 'Width', icon: 'width' },
-                                { id: 'height', label: 'Height', icon: 'height' },
-                            ].map((ctrl) => {
+                            {CROP_TOOLS.map((ctrl) => {
                                 const val = crop[ctrl.id as keyof CropState];
-                                const natural = imageRef.current ? (ctrl.id === 'x' || ctrl.id === 'width' ? imageRef.current.naturalWidth : imageRef.current.naturalHeight) : 0;
+                                const natural = ctrl.id === 'x' || ctrl.id === 'width' ? (imageSize?.width ?? 0) : (imageSize?.height ?? 0);
                                 const pixels = Math.round((val / 100) * natural);
 
                                 return (
-                                <div key={ctrl.id} className="flex flex-col gap-3 p-4 bg-surface-variant/20 rounded-2xl">
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <span className="material-symbols-rounded text-sm opacity-70">{ctrl.icon}</span>
-                                            <span className="text-xs font-medium uppercase tracking-wider">{ctrl.label}</span>
+                                    <div key={ctrl.id} className="flex flex-col gap-3 p-4 bg-surface-variant/20 rounded-2xl">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <span className="material-symbols-rounded text-sm opacity-70">{ctrl.icon}</span>
+                                                <span className="text-xs font-medium uppercase tracking-wider">{ctrl.label}</span>
+                                            </div>
+                                            <div className="flex flex-col items-end">
+                                                <span className="text-sm font-mono font-medium">{Math.round(val)}%</span>
+                                                <span className="text-[10px] opacity-50 font-mono">{pixels}px</span>
+                                            </div>
                                         </div>
-                                        <div className="flex flex-col items-end">
-                                            <span className="text-sm font-mono font-medium">{Math.round(val)}%</span>
-                                            <span className="text-[10px] opacity-50 font-mono">{pixels}px</span>
-                                        </div>
+                                        <input 
+                                            type="range" 
+                                            min="0" 
+                                            max="100" 
+                                            value={val}
+                                            onChange={(e) => updateCropSlider(ctrl.id as keyof CropState, parseInt(e.target.value))}
+                                            className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-surface-variant outline-none"
+                                            style={{ accentColor: 'var(--color-primary)' }}
+                                        />
                                     </div>
-                                    <input 
-                                        type="range" 
-                                        min="0" 
-                                        max="100" 
-                                        value={val}
-                                        onChange={(e) => updateCropSlider(ctrl.id as keyof CropState, parseInt(e.target.value))}
-                                        className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-surface-variant outline-none"
-                                        style={{ accentColor: 'var(--color-primary)' }}
-                                    />
-                                </div>
                                 );
                             })}
                         </div>
@@ -626,11 +650,11 @@ const Editor = () => {
             
             {activeTab === 'suggestions' && (
                 <div className="flex gap-3 overflow-x-auto no-scrollbar py-2">
-                    {['Default', 'Vivid', 'Warm', 'Cool', 'Mono'].map((preset) => (
+                    {PRESET_PRESETS.map((preset) => (
                         <button 
                             key={preset} 
                             onClick={() => applyPreset(preset)}
-                            className="min-w-[80px] aspect-video bg-surface-variant rounded-lg text-xs font-medium flex items-center justify-center border border-outline/20 hover:bg-opacity-80 active:scale-95 transition-all"
+                            className="min-w-20 aspect-video bg-surface-variant rounded-lg text-xs font-medium flex items-center justify-center border border-outline/20 hover:bg-opacity-80 active:scale-95 transition-all"
                         >
                             {preset}
                         </button>
@@ -638,19 +662,27 @@ const Editor = () => {
                 </div>
             )}
 
+            {activeTab === 'markup' && (
+                <button
+                    onClick={() => markupState.setMarkupEnabled(!markupState.markupEnabled)}
+                    className={`w-full py-3 px-4 rounded-xl font-medium transition-all ${
+                        markupState.markupEnabled
+                            ? 'bg-primary text-on-primary'
+                            : 'bg-surface-variant/30 text-on-surface'
+                    }`}
+                >
+                    {markupState.markupEnabled ? 'Drawing Active' : 'Enable Drawing'}
+                </button>
+            )}
+
             {activeTab === 'crop' && crop && (
                 <div className="flex gap-2 overflow-x-auto no-scrollbar py-2">
-                    {[
-                        { id: 'x', label: 'X', icon: 'align_horizontal_left' },
-                        { id: 'y', label: 'Y', icon: 'align_vertical_top' },
-                        { id: 'width', label: 'W', icon: 'width' },
-                        { id: 'height', label: 'H', icon: 'height' },
-                    ].map((ctrl) => (
-                        <div key={ctrl.id} className="min-w-[120px] p-2 bg-surface-variant/30 rounded-xl flex flex-col gap-1">
+                    {CROP_TOOLS_MOBILE.map((ctrl) => (
+                        <div key={ctrl.id} className="min-w-30 p-2 bg-surface-variant/30 rounded-xl flex flex-col gap-1">
                             <div className="flex justify-between items-center px-1">
                                 <span className="text-[10px] font-medium opacity-60">{ctrl.label}</span>
                                 <span className="text-[9px] font-mono opacity-40">
-                                    {Math.round((crop[ctrl.id as keyof CropState] / 100) * (imageRef.current ? (ctrl.id === 'x' || ctrl.id === 'width' ? imageRef.current.naturalWidth : imageRef.current.naturalHeight) : 0))}px
+                                    {Math.round((crop[ctrl.id as keyof CropState] / 100) * (ctrl.id === 'x' || ctrl.id === 'width' ? (imageSize?.width ?? 0) : (imageSize?.height ?? 0)))}px
                                 </span>
                             </div>
                             <input 
@@ -669,16 +701,11 @@ const Editor = () => {
 
         {/* Sub-tools (Icons for Adjust/Filters etc.) */}
         <div className="h-16 flex items-center gap-6 px-6 overflow-x-auto no-scrollbar mb-4">
-            {activeTab === 'adjust' && [
-                { id: 'brightness', label: 'Brightness', icon: 'light_mode' },
-                { id: 'contrast', label: 'Contrast', icon: 'contrast' },
-                { id: 'saturation', label: 'Saturation', icon: 'invert_colors' },
-                { id: 'warmth', label: 'Warmth', icon: 'thermostat' },
-            ].map((tool) => (
+            {activeTab === 'adjust' && ADJUSTMENT_TOOLS.map((tool) => (
                 <button 
                     key={tool.id} 
                     onClick={() => setActiveAdjustTool(tool.id as AdjustmentKey)}
-                    className={`flex flex-col items-center gap-1 min-w-[56px] transition-all ${activeAdjustTool === tool.id ? 'text-primary scale-110' : 'opacity-60 hover:opacity-100'}`}
+                    className={`flex flex-col items-center gap-1 min-w-14 transition-all ${activeAdjustTool === tool.id ? 'text-primary scale-110' : 'opacity-60 hover:opacity-100'}`}
                 >
                     <span className="material-symbols-rounded">{tool.icon}</span>
                     <span className="text-[10px] font-medium">{tool.label}</span>
@@ -688,17 +715,11 @@ const Editor = () => {
 
         {/* Main Tabs */}
         <div className="flex items-center justify-center gap-1 md:gap-4 overflow-x-auto no-scrollbar px-2">
-          {[
-            { id: 'suggestions', label: 'Suggestions', icon: 'magic_button' },
-            { id: 'crop', label: 'Crop', icon: 'crop' },
-            { id: 'adjust', label: 'Adjust', icon: 'tune' },
-            { id: 'filters', label: 'Filters', icon: 'filter_vintage' },
-            { id: 'markup', label: 'Markup', icon: 'brush' },
-          ].map((tab) => (
+          {MAIN_TABS.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex flex-col items-center gap-1 min-w-[76px] py-2 transition-all rounded-2xl ${
+              className={`flex flex-col items-center gap-1 min-w-19 py-2 transition-all rounded-2xl ${
                 activeTab === tab.id 
                 ? 'bg-primary-container text-on-primary-container' 
                 : 'hover:bg-surface-variant hover:bg-opacity-40'
@@ -712,6 +733,7 @@ const Editor = () => {
           ))}
         </div>
       </footer>
+      <StatusBar />
     </div>
   );
 };

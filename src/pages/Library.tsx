@@ -146,7 +146,7 @@ const Library = () => {
 
       {/* First-run Transparency Notice */}
       {showNotice && (
-        <div className="absolute inset-0 z-[100] flex items-center justify-center px-6">
+        <div className="absolute inset-0 z-100 flex items-center justify-center px-6">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={dismissNotice} />
           <div className="relative bg-surface p-8 lg:p-12 rounded-[32px] lg:rounded-[48px] max-w-sm lg:max-w-xl w-full shadow-2xl border border-outline/10 flex flex-col items-center text-center gap-6 lg:gap-10 animate-in fade-in zoom-in duration-300">
             <div className="w-16 h-16 lg:w-24 lg:h-24 bg-primary/10 text-primary rounded-full flex items-center justify-center">
