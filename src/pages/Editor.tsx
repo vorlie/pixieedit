@@ -202,11 +202,11 @@ const Editor = () => {
     });
   };
 
-  
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => {
     if (activeTab === 'crop' && !crop) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setCrop({ x: 10, y: 10, width: 80, height: 80 });
+      // Don't auto-initialize crop - let user explicitly draw it
+      // This prevents accidental cropping on export
     }
   }, [activeTab, crop]);
 
