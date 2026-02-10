@@ -341,6 +341,55 @@ const Editor = () => {
       // Draw cropped area
       ctx.drawImage(img, drawX, drawY, drawW, drawH, 0, 0, drawW, drawH);
 
+      // Reset filter for markup
+      ctx.filter = 'none';
+
+      // Draw markup if any
+      if (markupState.drawings.length > 0 && imageSize) {
+        const scaleX = drawW / imageSize.width;
+        const scaleY = drawH / imageSize.height;
+
+        markupState.drawings.forEach(drawing => {
+          ctx.strokeStyle = drawing.color;
+          ctx.fillStyle = drawing.color;
+          ctx.lineWidth = drawing.strokeWidth;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+
+          // Scale markup coordinates to match exported image
+          const x = drawing.x * scaleX;
+          const y = drawing.y * scaleY;
+          const x2 = (drawing.x2 || drawing.x) * scaleX;
+          const y2 = (drawing.y2 || drawing.y) * scaleY;
+
+          switch (drawing.tool) {
+            case 'circle': {
+              const radius = Math.sqrt(Math.pow(x2 - x, 2) + Math.pow(y2 - y, 2));
+              ctx.beginPath();
+              ctx.arc(x, y, radius, 0, 2 * Math.PI);
+              ctx.stroke();
+              break;
+            }
+            case 'rectangle': {
+              ctx.strokeRect(x, y, x2 - x, y2 - y);
+              break;
+            }
+            case 'line': {
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              ctx.lineTo(x2, y2);
+              ctx.stroke();
+              break;
+            }
+            case 'text': {
+              ctx.font = `${drawing.strokeWidth * 4}px Arial`;
+              ctx.fillText(drawing.text || '', x, y);
+              break;
+            }
+          }
+        });
+      }
+
       // Trigger download
       const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
       const link = document.createElement('a');
