@@ -194,9 +194,16 @@ const Editor = () => {
     if (activeTab === 'crop') initCrop();
   }, [activeTab]);
 
+  const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
+
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const { naturalWidth, naturalHeight } = e.currentTarget;
+    setImageSize({ width: naturalWidth, height: naturalHeight });
+  };
+
   if (!imageId || (pixieImage === undefined && imageId)) {
     return (
-       <div className="h-screen flex items-center justify-center p-8 text-center bg-surface">
+       <div className="h-screen flex items-center justify-center p-8 text-center bg-surface w-full">
         <div className="flex flex-col items-center gap-4 animate-pulse">
           <span className="material-symbols-rounded text-6xl opacity-20">image</span>
           <p className="text-on-surface-variant font-medium">Loading image...</p>
@@ -207,7 +214,7 @@ const Editor = () => {
 
   if (!pixieImage) {
     return (
-      <div className="h-screen flex items-center justify-center p-8 text-center bg-surface">
+      <div className="h-screen flex items-center justify-center p-8 text-center bg-surface w-full">
         <div className="flex flex-col items-center gap-4">
           <span className="material-symbols-rounded text-6xl opacity-20">image_not_supported</span>
           <p className="text-on-surface-variant">Image not found</p>
@@ -328,7 +335,7 @@ const Editor = () => {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-surface transition-colors duration-500 overflow-hidden select-none">
+    <div className="h-screen w-full flex flex-col bg-surface transition-colors duration-500 overflow-hidden select-none">
       <canvas ref={canvasRef} className="hidden" />
       
       {/* Top Action Bar */}
@@ -370,17 +377,23 @@ const Editor = () => {
         </div>
       </header>
 
-      <div className="flex-1 flex flex-col lg:flex-row min-h-0">
+      <div className="flex-1 flex flex-col lg:flex-row min-h-0 w-full">
         {/* Image Preview Area */}
-        <main className="flex-1 flex items-center justify-center p-6 bg-black/10 min-w-0 h-full overflow-hidden">
-          <div className="relative max-w-full max-h-full transition-all duration-500 ease-out flex items-center justify-center">
+        <main className="flex-1 flex items-center justify-center p-4 lg:p-12 bg-black/10 min-w-0 h-full overflow-hidden">
+          <div className="relative w-full h-full flex items-center justify-center">
             {imageUrl && (
-              <div className="relative inline-block">
+              <div 
+                className="relative max-w-full max-h-full shadow-2xl rounded-lg lg:rounded-xl overflow-hidden"
+                style={{ 
+                   aspectRatio: imageSize ? `${imageSize.width} / ${imageSize.height}` : 'auto',
+                }}
+              >
                 <img 
                   ref={imageRef}
+                  onLoad={handleImageLoad}
                   src={imageUrl} 
                   alt="Edit preview" 
-                  className={`max-w-full max-h-[50vh] lg:max-h-[80vh] rounded-lg shadow-2xl transition-all duration-300 ${activeTab === 'crop' ? 'opacity-50' : ''}`}
+                  className={`w-full h-full block transition-all duration-300 ${activeTab === 'crop' ? 'opacity-50' : ''}`}
                   style={filterStyle}
                 />
                 
