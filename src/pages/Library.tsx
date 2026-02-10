@@ -145,22 +145,22 @@ const Library = () => {
       {showNotice && (
         <div className="absolute inset-0 z-[100] flex items-center justify-center px-6">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={dismissNotice} />
-          <div className="relative bg-surface p-8 rounded-[32px] max-w-sm w-full shadow-2xl border border-outline/10 flex flex-col items-center text-center gap-6 animate-in fade-in zoom-in duration-300">
-            <div className="w-16 h-16 bg-primary/10 text-primary rounded-full flex items-center justify-center">
-              <span className="material-symbols-rounded text-3xl">verified_user</span>
+          <div className="relative bg-surface p-8 lg:p-12 rounded-[32px] lg:rounded-[48px] max-w-sm lg:max-w-xl w-full shadow-2xl border border-outline/10 flex flex-col items-center text-center gap-6 lg:gap-10 animate-in fade-in zoom-in duration-300">
+            <div className="w-16 h-16 lg:w-24 lg:h-24 bg-primary/10 text-primary rounded-full flex items-center justify-center">
+              <span className="material-symbols-rounded text-3xl lg:text-5xl">verified_user</span>
             </div>
-            <div className="flex flex-col gap-2">
-              <h2 className="text-2xl font-sans font-medium tracking-tight">Everything stays local</h2>
-              <p className="text-on-surface-variant text-sm leading-relaxed">
+            <div className="flex flex-col gap-2 lg:gap-4">
+              <h2 className="text-2xl lg:text-4xl font-sans font-medium tracking-tight">Everything stays local</h2>
+              <p className="text-on-surface-variant text-sm lg:text-lg leading-relaxed">
                 Your photos and edits are stored directly in your browser's local database. We never upload your data, ensuring total privacy.
               </p>
-              <p className="text-on-surface-variant/60 text-[11px] leading-relaxed mt-2">
+              <p className="text-on-surface-variant/60 text-[11px] lg:text-xs leading-relaxed mt-2">
                 Note: This may use additional device storage space.
               </p>
             </div>
             <button 
               onClick={dismissNotice}
-              className="w-full bg-primary text-on-primary py-4 rounded-full font-medium hover:brightness-110 active:scale-95 transition-all shadow-lg"
+              className="w-full bg-primary text-on-primary py-4 lg:py-5 rounded-full font-medium lg:text-lg hover:brightness-110 active:scale-95 transition-all shadow-lg"
             >
               Got it
             </button>
