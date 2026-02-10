@@ -345,9 +345,18 @@ const Editor = () => {
       ctx.filter = 'none';
 
       // Draw markup if any
-      if (markupState.drawings.length > 0 && imageSize) {
-        const scaleX = drawW / imageSize.width;
-        const scaleY = drawH / imageSize.height;
+      if (markupState.drawings.length > 0 && imageRef.current && containerRef.current) {
+        // Get the displayed image dimensions on screen
+        const imageDisplayRect = imageRef.current.getBoundingClientRect();
+        const containerRect = containerRef.current.getBoundingClientRect();
+
+        // Calculate scale factors from display coordinates to actual image coordinates
+        const scaleX = imageRef.current.naturalWidth / imageDisplayRect.width;
+        const scaleY = imageRef.current.naturalHeight / imageDisplayRect.height;
+
+        // Calculate offset of image within container (for centering)
+        const offsetX = (imageDisplayRect.left - containerRect.left) / containerRect.width;
+        const offsetY = (imageDisplayRect.top - containerRect.top) / containerRect.height;
 
         markupState.drawings.forEach(drawing => {
           ctx.strokeStyle = drawing.color;
@@ -356,11 +365,17 @@ const Editor = () => {
           ctx.lineCap = 'round';
           ctx.lineJoin = 'round';
 
-          // Scale markup coordinates to match exported image
-          const x = drawing.x * scaleX;
-          const y = drawing.y * scaleY;
-          const x2 = (drawing.x2 || drawing.x) * scaleX;
-          const y2 = (drawing.y2 || drawing.y) * scaleY;
+          // Convert from canvas display coordinates to original image coordinates
+          const canvasX = drawing.x - (offsetX * containerRect.width);
+          const canvasY = drawing.y - (offsetY * containerRect.height);
+          const canvasX2 = (drawing.x2 || drawing.x) - (offsetX * containerRect.width);
+          const canvasY2 = (drawing.y2 || drawing.y) - (offsetY * containerRect.height);
+
+          // Scale to actual image dimensions and account for crop
+          const x = (canvasX * scaleX) - drawX;
+          const y = (canvasY * scaleY) - drawY;
+          const x2 = (canvasX2 * scaleX) - drawX;
+          const y2 = (canvasY2 * scaleY) - drawY;
 
           switch (drawing.tool) {
             case 'circle': {
