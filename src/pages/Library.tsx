@@ -63,7 +63,10 @@ const Library = () => {
     <div className="flex h-screen bg-surface text-on-surface overflow-hidden relative">
       {/* PC Side Navigation */}
       <aside className="hidden lg:flex flex-col w-64 border-r border-outline/10 p-4 gap-2">
-        <h1 className="px-4 py-6 text-2xl font-sans font-medium tracking-tight">PixieEdit</h1>
+        <div className="flex items-center gap-3 px-4 py-6">
+          <img src="/pixie_icon.svg" alt="PixieEdit Logo" className="w-8 h-8 rounded-lg shadow-sm" />
+          <h1 className="text-2xl font-sans font-medium tracking-tight">PixieEdit</h1>
+        </div>
         
         <button className="flex items-center gap-4 px-4 py-3 bg-primary-container text-on-primary-container rounded-full font-medium transition-all text-sm">
           <span className="material-symbols-rounded">image</span>
