@@ -15,6 +15,11 @@ export interface ImageEditState {
   saturation: number;
   warmth: number;
   sharpness: number;
+  // rotation in degrees (0, 90, 180, 270)
+  rotation?: number;
+  // horizontal/vertical flip flags
+  flipH?: boolean;
+  flipV?: boolean;
   crop?: CropState;
 }
 

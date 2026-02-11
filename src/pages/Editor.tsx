@@ -31,6 +31,10 @@ const Editor = () => {
   const [crop, setCrop] = useState<CropState | undefined>(undefined);
   const [activeTab, setActiveTab] = useState('adjust');
   const [activeAdjustTool, setActiveAdjustTool] = useState<AdjustmentKey>('brightness');
+  // Rotation / flip state (degrees must be 0|90|180|270)
+  const [rotation, setRotation] = useState<number>(0);
+  const [flipH, setFlipH] = useState<boolean>(false);
+  const [flipV, setFlipV] = useState<boolean>(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -43,6 +47,10 @@ const Editor = () => {
       // eslint-disable-next-line
       setAdjustments(pixieImage.edits);
       setCrop(pixieImage.edits.crop);
+      // load persisted rotation/flip if present
+      if (typeof pixieImage.edits.rotation === 'number') setRotation(pixieImage.edits.rotation);
+      if (typeof pixieImage.edits.flipH === 'boolean') setFlipH(pixieImage.edits.flipH);
+      if (typeof pixieImage.edits.flipV === 'boolean') setFlipV(pixieImage.edits.flipV);
     }
   }, [pixieImage]);
 
@@ -52,12 +60,12 @@ const Editor = () => {
     
     const timeoutId = setTimeout(() => {
       db.images.update(imageId, { 
-        edits: { ...adjustments, crop } 
+        edits: { ...adjustments, crop, rotation, flipH, flipV } 
       });
     }, 1000);
 
     return () => clearTimeout(timeoutId);
-  }, [adjustments, crop, imageId]);
+  }, [adjustments, crop, imageId, rotation, flipH, flipV]);
 
   const imageUrl = useMemo(() => {
     if (pixieImage?.originalBlob) {
@@ -202,7 +210,6 @@ const Editor = () => {
     });
   };
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => {
     if (activeTab === 'crop' && !crop) {
       // Don't auto-initialize crop - let user explicitly draw it
@@ -319,7 +326,7 @@ const Editor = () => {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      // Handle cropping
+      // Determine crop area in original image pixels
       let drawX = 0;
       let drawY = 0;
       let drawW = img.width;
@@ -332,84 +339,91 @@ const Editor = () => {
         drawH = (crop.height / 100) * img.height;
       }
 
-      canvas.width = drawW;
-      canvas.height = drawH;
+      // Draw image+markup into a temporary canvas at "natural" crop size
+      const temp = document.createElement('canvas');
+      temp.width = Math.max(1, Math.round(drawW));
+      temp.height = Math.max(1, Math.round(drawH));
+      const tctx = temp.getContext('2d');
+      if (!tctx) return;
 
-      // Apply same filters to canvas
-      ctx.filter = `brightness(${adjustments.brightness}%) contrast(${adjustments.contrast}%) saturate(${adjustments.saturation}%) sepia(${adjustments.warmth > 0 ? adjustments.warmth : 0}%) hue-rotate(${adjustments.warmth < 0 ? adjustments.warmth * 0.5 : 0}deg)`;
-      
-      // Draw cropped area
-      ctx.drawImage(img, drawX, drawY, drawW, drawH, 0, 0, drawW, drawH);
+      // Apply filters to the temp canvas and draw the cropped area
+      tctx.filter = `brightness(${adjustments.brightness}%) contrast(${adjustments.contrast}%) saturate(${adjustments.saturation}%) sepia(${adjustments.warmth > 0 ? adjustments.warmth : 0}%) hue-rotate(${adjustments.warmth < 0 ? adjustments.warmth * 0.5 : 0}deg)`;
+      tctx.drawImage(img, drawX, drawY, drawW, drawH, 0, 0, temp.width, temp.height);
+      tctx.filter = 'none';
 
-      // Reset filter for markup
-      ctx.filter = 'none';
+      // Draw markup onto temp canvas (map overlay coords -> original image pixels -> cropped local coords)
+      if (markupState.drawings.length > 0 && imageRef.current && containerRef.current) {
+        const imageDisplayRect = imageRef.current.getBoundingClientRect();
+        const containerRect = containerRef.current.getBoundingClientRect();
 
-      // Draw markup if any
-      if (markupState.drawings.length > 0) {
-        // Scale from display canvas coordinates to original image coordinates
-        // The markup canvas matches the container size, need to map to original image
-        const imageDisplayRect = imageRef.current?.getBoundingClientRect();
-        const containerRect = containerRef.current?.getBoundingClientRect();
+        const displayWidth = imageRef.current.clientWidth || imageDisplayRect.width || temp.width;
+        const displayHeight = imageRef.current.clientHeight || imageDisplayRect.height || temp.height;
+        const scaleX = img.width / displayWidth;
+        const scaleY = img.height / displayHeight;
 
-        if (imageDisplayRect && containerRect) {
-          // Calculate the scale from display size to original image size
-          const displayWidth = imageDisplayRect.width;
-          const displayHeight = imageDisplayRect.height;
-          const scaleX = img.width / displayWidth;
-          const scaleY = img.height / displayHeight;
+        const offsetX = imageDisplayRect.left - containerRect.left;
+        const offsetY = imageDisplayRect.top - containerRect.top;
 
-          markupState.drawings.forEach(drawing => {
-            ctx.strokeStyle = drawing.color;
-            ctx.fillStyle = drawing.color;
-            ctx.lineWidth = drawing.strokeWidth;
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
+        markupState.drawings.forEach(drawing => {
+          tctx.strokeStyle = drawing.color;
+          tctx.fillStyle = drawing.color;
+          tctx.lineCap = 'round';
+          tctx.lineJoin = 'round';
+          // stroke width scaled to image pixels
+          tctx.lineWidth = ((drawing.strokeWidth || 1) * ((scaleX + scaleY) / 2));
 
-            // Map from canvas overlay coordinates to original image coordinates
-            // Canvas overlay position relative to container
-            const offsetX = imageDisplayRect.left - containerRect.left;
-            const offsetY = imageDisplayRect.top - containerRect.top;
+          const imgX = (drawing.x - offsetX) * scaleX;
+          const imgY = (drawing.y - offsetY) * scaleY;
+          const imgX2 = ((drawing.x2 || drawing.x) - offsetX) * scaleX;
+          const imgY2 = ((drawing.y2 || drawing.y) - offsetY) * scaleY;
 
-            // Convert from canvas display space to original image space
-            const imgX = (drawing.x - offsetX) * scaleX;
-            const imgY = (drawing.y - offsetY) * scaleY;
-            const imgX2 = ((drawing.x2 || drawing.x) - offsetX) * scaleX;
-            const imgY2 = ((drawing.y2 || drawing.y) - offsetY) * scaleY;
+          const finalX = imgX - drawX;
+          const finalY = imgY - drawY;
+          const finalX2 = imgX2 - drawX;
+          const finalY2 = imgY2 - drawY;
 
-            // Adjust for crop if applied
-            const finalX = imgX - drawX;
-            const finalY = imgY - drawY;
-            const finalX2 = imgX2 - drawX;
-            const finalY2 = imgY2 - drawY;
-
-            switch (drawing.tool) {
-              case 'circle': {
-                const radius = Math.sqrt(Math.pow(finalX2 - finalX, 2) + Math.pow(finalY2 - finalY, 2));
-                ctx.beginPath();
-                ctx.arc(finalX, finalY, radius, 0, 2 * Math.PI);
-                ctx.stroke();
-                break;
-              }
-              case 'rectangle': {
-                ctx.strokeRect(finalX, finalY, finalX2 - finalX, finalY2 - finalY);
-                break;
-              }
-              case 'line': {
-                ctx.beginPath();
-                ctx.moveTo(finalX, finalY);
-                ctx.lineTo(finalX2, finalY2);
-                ctx.stroke();
-                break;
-              }
-              case 'text': {
-                ctx.font = `${drawing.strokeWidth * 4}px Arial`;
-                ctx.fillText(drawing.text || '', finalX, finalY);
-                break;
-              }
+          switch (drawing.tool) {
+            case 'circle': {
+              const radius = Math.sqrt(Math.pow(finalX2 - finalX, 2) + Math.pow(finalY2 - finalY, 2));
+              tctx.beginPath();
+              tctx.arc(finalX, finalY, radius, 0, 2 * Math.PI);
+              tctx.stroke();
+              break;
             }
-          });
-        }
+            case 'rectangle': {
+              tctx.strokeRect(finalX, finalY, finalX2 - finalX, finalY2 - finalY);
+              break;
+            }
+            case 'line': {
+              tctx.beginPath();
+              tctx.moveTo(finalX, finalY);
+              tctx.lineTo(finalX2, finalY2);
+              tctx.stroke();
+              break;
+            }
+            case 'text': {
+              tctx.font = `${(drawing.strokeWidth || 1) * 4 * ((scaleX + scaleY) / 2)}px Arial`;
+              tctx.fillText(drawing.text || '', finalX, finalY);
+              break;
+            }
+          }
+        });
       }
+
+      // Final canvas: apply rotation and flip by drawing the temp canvas into the final canvas with transforms
+      const finalW = (rotation % 180 === 0) ? temp.width : temp.height;
+      const finalH = (rotation % 180 === 0) ? temp.height : temp.width;
+
+      canvas.width = finalW;
+      canvas.height = finalH;
+
+      // Clear and draw with transforms centered
+      ctx.save();
+      ctx.translate(finalW / 2, finalH / 2);
+      ctx.rotate((rotation * Math.PI) / 180);
+      ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+      ctx.drawImage(temp, -temp.width / 2, -temp.height / 2);
+      ctx.restore();
 
       // Trigger download
       const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
@@ -455,10 +469,38 @@ const Editor = () => {
                 Reset
             </button>
             <button 
-                onClick={handleExport}
-                className="px-6 py-2 bg-primary rounded-full text-on-primary font-medium shadow-sm hover:brightness-110 active:scale-95 transition-all text-sm lg:text-base"
+              onClick={() => setRotation((r) => (r + 270) % 360)}
+              title="Rotate left"
+              className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-variant transition-colors shrink-0"
             >
-                Save copy
+              <span className="material-symbols-rounded">rotate_left</span>
+            </button>
+            <button 
+              onClick={() => setRotation((r) => (r + 90) % 360)}
+              title="Rotate right"
+              className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-variant transition-colors shrink-0"
+            >
+              <span className="material-symbols-rounded">rotate_right</span>
+            </button>
+            <button 
+              onClick={() => setFlipH((v) => !v)}
+              title="Flip horizontal"
+              className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-variant transition-colors shrink-0"
+            >
+              <span className="material-symbols-rounded">swap_horiz</span>
+            </button>
+            <button 
+              onClick={() => setFlipV((v) => !v)}
+              title="Flip vertical"
+              className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-variant transition-colors shrink-0"
+            >
+              <span className="material-symbols-rounded">swap_vert</span>
+            </button>
+            <button 
+              onClick={handleExport}
+              className="px-6 py-2 bg-primary rounded-full text-on-primary font-medium shadow-sm hover:brightness-110 active:scale-95 transition-all text-sm lg:text-base"
+            >
+              Save copy
             </button>
         </div>
       </header>
@@ -473,6 +515,9 @@ const Editor = () => {
                 className="relative max-w-full max-h-full shadow-2xl rounded-lg lg:rounded-xl overflow-hidden"
                 style={{ 
                    aspectRatio: imageSize ? `${imageSize.width} / ${imageSize.height}` : 'auto',
+                   transform: `rotate(${rotation}deg) scaleX(${flipH ? -1 : 1}) scaleY(${flipV ? -1 : 1})`,
+                   transformOrigin: 'center center',
+                   transition: 'transform 0.25s ease',
                 }}
               >
                 <img 
