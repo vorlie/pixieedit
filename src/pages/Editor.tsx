@@ -1,78 +1,86 @@
-import { useLocation, useNavigate } from 'react-router-dom';
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useState, useRef, useEffect, useMemo, useCallback, useReducer } from 'react';
 import useDynamicColor from '../hooks/useDynamicColor';
-import { db, type AdjustmentKey, type CropState } from '../db/db';
+import { db, type AdjustmentKey, type CropState, type Rotation } from '../db/db';
+import { createDefaultEdits, normalizeEdits } from '../editor/editModel';
+import { FILTERS, createRenderSpec, getCropPixels, getOutputSize, getRenderParameters, screenDeltaToImagePercent, updateCrop, type CropDragType } from '../editor/render';
+import { editReducer } from '../editor/editReducer';
+import { autoEnhanceImage, type AdjustmentValues } from '../editor/autoEnhance';
+import { releaseRenderResources, renderImage } from '../editor/imageRenderer';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { ADJUSTMENT_TOOLS, CROP_TOOLS, CROP_TOOLS_MOBILE, PRESET_PRESETS, MAIN_TABS } from '../config/tools';
 import { useMarkupState } from '../hooks/useMarkupState';
 import { MarkupCanvas } from '../components/MarkupCanvas';
 import { MarkupTools } from '../components/MarkupTools';
 import { StatusBar } from '../components/StatusBar';
+import { ProcessedImage } from '../components/ProcessedImage';
 
 const Editor = () => {
-  const location = useLocation();
   const navigate = useNavigate();
-  const imageId = location.state?.imageId;
+  const [searchParams] = useSearchParams();
+  const parsedImageId = Number(searchParams.get('id'));
+  const imageId = Number.isInteger(parsedImageId) && parsedImageId > 0 ? parsedImageId : undefined;
   
   // Load image from Dexie
   const pixieImage = useLiveQuery(
-    async () => (imageId ? await db.images.get(imageId) : undefined),
+    async () => (imageId ? (await db.images.get(imageId) ?? null) : null),
     [imageId]
   );
 
-  const [adjustments, setAdjustments] = useState<Record<AdjustmentKey, number>>({
-    brightness: 100,
-    contrast: 100,
-    saturation: 100,
-    warmth: 0,
-    sharpness: 0, 
-  });
-
-  const [crop, setCrop] = useState<CropState | undefined>(undefined);
+  const [edits, dispatchEdit] = useReducer(editReducer, undefined, createDefaultEdits);
+  const adjustments: AdjustmentValues = {
+    brightness: edits.brightness, contrast: edits.contrast, saturation: edits.saturation,
+    exposure: edits.exposure, highlights: edits.highlights, shadows: edits.shadows,
+    temperature: edits.temperature, tint: edits.tint, vibrance: edits.vibrance,
+    sharpness: edits.sharpness, vignette: edits.vignette,
+  };
+  const { crop, rotation, flipH, flipV, filter } = edits;
   const [activeTab, setActiveTab] = useState('adjust');
   const [activeAdjustTool, setActiveAdjustTool] = useState<AdjustmentKey>('brightness');
-  // Rotation / flip state (degrees must be 0|90|180|270)
-  const [rotation, setRotation] = useState<number>(0);
-  const [flipH, setFlipH] = useState<boolean>(false);
-  const [flipV, setFlipV] = useState<boolean>(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [preAutoAdjustments, setPreAutoAdjustments] = useState<AdjustmentValues | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [editorError, setEditorError] = useState('');
+  const [loadedImageId, setLoadedImageId] = useState<number>();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
   const markupState = useMarkupState();
+  const { replaceDrawings } = markupState;
 
   // Initialize from DB when image loads
   useEffect(() => {
-    if (pixieImage?.edits) {
-      // eslint-disable-next-line
-      setAdjustments(pixieImage.edits);
-      setCrop(pixieImage.edits.crop);
-      // load persisted rotation/flip if present
-      if (typeof pixieImage.edits.rotation === 'number') setRotation(pixieImage.edits.rotation);
-      if (typeof pixieImage.edits.flipH === 'boolean') setFlipH(pixieImage.edits.flipH);
-      if (typeof pixieImage.edits.flipV === 'boolean') setFlipV(pixieImage.edits.flipV);
+    if (pixieImage?.edits && pixieImage.id === imageId && loadedImageId !== imageId) {
+      const edits = normalizeEdits(pixieImage.edits);
+      dispatchEdit({ type: 'load', edits });
+      replaceDrawings(edits.markup);
+      setLoadedImageId(imageId);
     }
-  }, [pixieImage]);
+  }, [pixieImage, imageId, loadedImageId, replaceDrawings]);
 
   // Debounced auto-save to IndexedDB
   useEffect(() => {
-    if (!imageId) return;
+    if (!imageId || loadedImageId !== imageId) return;
     
     const timeoutId = setTimeout(() => {
       db.images.update(imageId, { 
-        edits: { ...adjustments, crop, rotation, flipH, flipV } 
+        edits: { ...edits, markup: markupState.drawings }
       });
     }, 1000);
 
     return () => clearTimeout(timeoutId);
-  }, [adjustments, crop, imageId, rotation, flipH, flipV]);
+  }, [edits, imageId, loadedImageId, markupState.drawings]);
 
-  const imageUrl = useMemo(() => {
-    if (pixieImage?.originalBlob) {
-      return URL.createObjectURL(pixieImage.originalBlob);
-    }
-    return '';
-  }, [pixieImage]);
+  const originalBlob = pixieImage?.originalBlob;
+  const imageUrl = useMemo(
+    () => originalBlob ? URL.createObjectURL(originalBlob) : '',
+    [originalBlob]
+  );
+
+  useEffect(() => () => {
+    if (imageUrl) URL.revokeObjectURL(imageUrl);
+  }, [imageUrl]);
 
   // Apply dynamic theme based on image
   useDynamicColor(imageUrl || '');
@@ -81,7 +89,7 @@ const Editor = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [dragInitialCrop, setDragInitialCrop] = useState<CropState | null>(null);
-  const [dragType, setDragType] = useState<'move' | 'corner-tl' | 'corner-tr' | 'corner-bl' | 'corner-br' | 'side-l' | 'side-r' | 'side-t' | 'side-b' | null>(null);
+  const [dragType, setDragType] = useState<CropDragType | null>(null);
 
   const handleCropMouseDown = (e: React.MouseEvent | React.TouchEvent, type: typeof dragType) => {
     e.preventDefault();
@@ -105,72 +113,9 @@ const Editor = () => {
     const dx = clientX - dragStart.x;
     const dy = clientY - dragStart.y;
 
-    const rect = imageRef.current.getBoundingClientRect();
-    const dxPercent = (dx / rect.width) * 100;
-    const dyPercent = (dy / rect.height) * 100;
-
-    setCrop(() => {
-      let { x, y, width, height } = dragInitialCrop;
-
-      switch (dragType) {
-        case 'move': {
-          x = Math.max(0, Math.min(100 - width, x + dxPercent));
-          y = Math.max(0, Math.min(100 - height, y + dyPercent));
-          break;
-        }
-        case 'corner-tl': {
-          const newX_tl = Math.max(0, Math.min(x + width - 5, x + dxPercent));
-          const newY_tl = Math.max(0, Math.min(y + height - 5, y + dyPercent));
-          width += (x - newX_tl);
-          height += (y - newY_tl);
-          x = newX_tl;
-          y = newY_tl;
-          break;
-        }
-        case 'corner-tr': {
-          const newY_tr = Math.max(0, Math.min(y + height - 5, y + dyPercent));
-          width = Math.max(5, Math.min(100 - x, width + dxPercent));
-          height += (y - newY_tr);
-          y = newY_tr;
-          break;
-        }
-        case 'corner-bl': {
-          const newX_bl = Math.max(0, Math.min(x + width - 5, x + dxPercent));
-          width += (x - newX_bl);
-          height = Math.max(5, Math.min(100 - y, height + dyPercent));
-          x = newX_bl;
-          break;
-        }
-        case 'corner-br': {
-          width = Math.max(5, Math.min(100 - x, width + dxPercent));
-          height = Math.max(5, Math.min(100 - y, height + dyPercent));
-          break;
-        }
-        case 'side-l': {
-          const resX_l = Math.max(0, Math.min(x + width - 5, x + dxPercent));
-          width += (x - resX_l);
-          x = resX_l;
-          break;
-        }
-        case 'side-r': {
-          width = Math.max(5, Math.min(100 - x, width + dxPercent));
-          break;
-        }
-        case 'side-t': {
-          const resY_t = Math.max(0, Math.min(y + height - 5, y + dyPercent));
-          height += (y - resY_t);
-          y = resY_t;
-          break;
-        }
-        case 'side-b': {
-          height = Math.max(5, Math.min(100 - y, height + dyPercent));
-          break;
-        }
-      }
-
-      return { x, y, width, height };
-    });
-  }, [isDragging, dragInitialCrop, dragStart, dragType]);
+    const delta = screenDeltaToImagePercent(dx, dy, imageRef.current.clientWidth, imageRef.current.clientHeight, rotation, flipH, flipV);
+    if (dragType) dispatchEdit({ type: 'set-crop', crop: updateCrop(dragInitialCrop, dragType, delta.x, delta.y) });
+  }, [isDragging, dragInitialCrop, dragStart, dragType, rotation, flipH, flipV]);
 
   const handleCropMouseUp = useCallback(() => {
     setIsDragging(false);
@@ -194,37 +139,33 @@ const Editor = () => {
 
   const updateCropSlider = (key: keyof CropState, value: number) => {
     if (!crop) return;
-    setCrop(prev => {
-        if (!prev) return prev;
-        let newX = prev.x;
-        let newY = prev.y;
-        let newW = prev.width;
-        let newH = prev.height;
+    let newX = crop.x;
+    let newY = crop.y;
+    let newW = crop.width;
+    let newH = crop.height;
 
-        if (key === 'x') newX = Math.min(value, 100 - newW);
-        if (key === 'y') newY = Math.min(value, 100 - newH);
-        if (key === 'width') newW = Math.min(value, 100 - newX);
-        if (key === 'height') newH = Math.min(value, 100 - newY);
+    if (key === 'x') newX = Math.min(value, 100 - newW);
+    if (key === 'y') newY = Math.min(value, 100 - newH);
+    if (key === 'width') newW = Math.min(value, 100 - newX);
+    if (key === 'height') newH = Math.min(value, 100 - newY);
 
-        return { x: newX, y: newY, width: newW, height: newH };
-    });
+    dispatchEdit({ type: 'set-crop', crop: { x: newX, y: newY, width: newW, height: newH } });
   };
 
-  useEffect(() => {
-    if (activeTab === 'crop' && !crop) {
-      // Don't auto-initialize crop - let user explicitly draw it
-      // This prevents accidental cropping on export
-    }
-  }, [activeTab, crop]);
+  const startCrop = () => {
+    // An inset selection makes the handles immediately visible while keeping
+    // crop opt-in: merely opening the Crop tab does not alter the export.
+    dispatchEdit({ type: 'set-crop', crop: { x: 10, y: 10, width: 80, height: 80 } });
+  };
 
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
 
-  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const { naturalWidth, naturalHeight } = e.currentTarget;
+  const handleImageLoad = (image: HTMLImageElement) => {
+    const { naturalWidth, naturalHeight } = image;
     setImageSize({ width: naturalWidth, height: naturalHeight });
   };
 
-  if (!imageId || (pixieImage === undefined && imageId)) {
+  if (imageId && pixieImage === undefined) {
     return (
        <div className="h-screen flex items-center justify-center p-8 text-center bg-surface w-full">
         <div className="flex flex-col items-center gap-4 animate-pulse">
@@ -235,7 +176,7 @@ const Editor = () => {
     );
   }
 
-  if (!pixieImage) {
+  if (!imageId || !pixieImage) {
     return (
       <div className="h-screen flex items-center justify-center p-8 text-center bg-surface w-full">
         <div className="flex flex-col items-center gap-4">
@@ -252,73 +193,105 @@ const Editor = () => {
     );
   }
 
-  const handleAdjustChange = (key: string, value: number) => {
-    setAdjustments(prev => ({ ...prev, [key]: value }));
+  const handleAdjustChange = (key: AdjustmentKey, value: number) => {
+    setPreAutoAdjustments(null);
+    dispatchEdit({ type: 'set-adjustment', key, value });
   };
 
   const resetAdjustments = () => {
-    setAdjustments({
+    setPreAutoAdjustments(null);
+    dispatchEdit({ type: 'replace-adjustments', adjustments: {
       brightness: 100,
       contrast: 100,
       saturation: 100,
-      warmth: 0,
+      exposure: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, vibrance: 0,
       sharpness: 0,
-    });
+      vignette: 0,
+    } });
   };
 
   const applyPreset = (preset: string) => {
+    setPreAutoAdjustments(null);
     switch (preset) {
       case 'Default':
         resetAdjustments();
         break;
       case 'Vivid':
-        setAdjustments({
+        dispatchEdit({ type: 'replace-adjustments', adjustments: {
           brightness: 110,
           contrast: 120,
           saturation: 130,
-          warmth: 0,
+          exposure: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, vibrance: 0,
           sharpness: 0,
-        });
+          vignette: 0,
+        } });
         break;
       case 'Warm':
-        setAdjustments({
+        dispatchEdit({ type: 'replace-adjustments', adjustments: {
           brightness: 105,
           contrast: 105,
           saturation: 110,
-          warmth: 30,
+          exposure: 0, highlights: 0, shadows: 0, temperature: 30, tint: 0, vibrance: 0,
           sharpness: 0,
-        });
+          vignette: 0,
+        } });
         break;
       case 'Cool':
-        setAdjustments({
+        dispatchEdit({ type: 'replace-adjustments', adjustments: {
           brightness: 105,
           contrast: 105,
           saturation: 110,
-          warmth: -30,
+          exposure: 0, highlights: 0, shadows: 0, temperature: -30, tint: 0, vibrance: 0,
           sharpness: 0,
-        });
+          vignette: 0,
+        } });
         break;
       case 'Mono':
-        setAdjustments({
+        dispatchEdit({ type: 'replace-adjustments', adjustments: {
           brightness: 110,
           contrast: 120,
           saturation: 0,
-          warmth: 0,
+          exposure: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, vibrance: 0,
           sharpness: 0,
-        });
+          vignette: 0,
+        } });
         break;
     }
   };
 
-  const filterStyle = {
-    filter: `brightness(${adjustments.brightness}%) contrast(${adjustments.contrast}%) saturate(${adjustments.saturation}%) sepia(${adjustments.warmth > 0 ? adjustments.warmth : 0}%) hue-rotate(${adjustments.warmth < 0 ? adjustments.warmth * 0.5 : 0}deg)`
+  const currentEdits = normalizeEdits({ ...edits, markup: markupState.drawings });
+  const renderSpec = createRenderSpec(currentEdits);
+  const activeAdjustConfig = ADJUSTMENT_TOOLS.find((tool) => tool.id === activeAdjustTool) ?? ADJUSTMENT_TOOLS[0];
+
+  const handleAutoEnhance = async () => {
+    const image = imageRef.current;
+    if (!image || isAnalyzing) return;
+    setIsAnalyzing(true);
+    setEditorError('');
+    try {
+      const result = await autoEnhanceImage(image, image.naturalWidth, image.naturalHeight);
+      setPreAutoAdjustments({ ...adjustments });
+      dispatchEdit({ type: 'apply-auto-enhance', adjustments: result.adjustments });
+    } catch (error) {
+      setEditorError(error instanceof Error ? error.message : 'Auto Enhance could not analyze this image.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const revertAutoEnhance = () => {
+    if (!preAutoAdjustments) return;
+    dispatchEdit({ type: 'replace-adjustments', adjustments: preAutoAdjustments });
+    setPreAutoAdjustments(null);
   };
 
   const handleExport = () => {
-    if (!imageUrl || !pixieImage) return;
+    if (!imageUrl || !pixieImage || isExporting) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    setIsExporting(true);
+    setEditorError('');
     const img = new Image();
     img.crossOrigin = "Anonymous";
     img.src = imageUrl;
@@ -327,17 +300,8 @@ const Editor = () => {
       if (!ctx) return;
 
       // Determine crop area in original image pixels
-      let drawX = 0;
-      let drawY = 0;
-      let drawW = img.width;
-      let drawH = img.height;
-
-      if (crop) {
-        drawX = (crop.x / 100) * img.width;
-        drawY = (crop.y / 100) * img.height;
-        drawW = (crop.width / 100) * img.width;
-        drawH = (crop.height / 100) * img.height;
-      }
+      const cropPixels = getCropPixels(crop, img.width, img.height);
+      const { x: drawX, y: drawY, width: drawW, height: drawH } = cropPixels;
 
       // Draw image+markup into a temporary canvas at "natural" crop size
       const temp = document.createElement('canvas');
@@ -346,23 +310,22 @@ const Editor = () => {
       const tctx = temp.getContext('2d');
       if (!tctx) return;
 
-      // Apply filters to the temp canvas and draw the cropped area
-      tctx.filter = `brightness(${adjustments.brightness}%) contrast(${adjustments.contrast}%) saturate(${adjustments.saturation}%) sepia(${adjustments.warmth > 0 ? adjustments.warmth : 0}%) hue-rotate(${adjustments.warmth < 0 ? adjustments.warmth * 0.5 : 0}deg)`;
-      tctx.drawImage(img, drawX, drawY, drawW, drawH, 0, 0, temp.width, temp.height);
-      tctx.filter = 'none';
+      // Preview and export share the same numeric WebGL/Canvas renderer.
+      const processed = renderImage(
+        img, img.width, img.height, temp.width, temp.height,
+        getRenderParameters(renderSpec), { x: drawX, y: drawY, width: drawW, height: drawH },
+      );
+      tctx.drawImage(processed.canvas, 0, 0);
+      releaseRenderResources(processed.canvas, processed.backend);
 
       // Draw markup onto temp canvas (map overlay coords -> original image pixels -> cropped local coords)
-      if (markupState.drawings.length > 0 && imageRef.current && containerRef.current) {
+      if (markupState.drawings.length > 0 && imageRef.current) {
         const imageDisplayRect = imageRef.current.getBoundingClientRect();
-        const containerRect = containerRef.current.getBoundingClientRect();
 
         const displayWidth = imageRef.current.clientWidth || imageDisplayRect.width || temp.width;
         const displayHeight = imageRef.current.clientHeight || imageDisplayRect.height || temp.height;
         const scaleX = img.width / displayWidth;
         const scaleY = img.height / displayHeight;
-
-        const offsetX = imageDisplayRect.left - containerRect.left;
-        const offsetY = imageDisplayRect.top - containerRect.top;
 
         markupState.drawings.forEach(drawing => {
           tctx.strokeStyle = drawing.color;
@@ -372,10 +335,10 @@ const Editor = () => {
           // stroke width scaled to image pixels
           tctx.lineWidth = ((drawing.strokeWidth || 1) * ((scaleX + scaleY) / 2));
 
-          const imgX = (drawing.x - offsetX) * scaleX;
-          const imgY = (drawing.y - offsetY) * scaleY;
-          const imgX2 = ((drawing.x2 || drawing.x) - offsetX) * scaleX;
-          const imgY2 = ((drawing.y2 || drawing.y) - offsetY) * scaleY;
+          const imgX = drawing.x * img.width;
+          const imgY = drawing.y * img.height;
+          const imgX2 = (drawing.x2 ?? drawing.x) * img.width;
+          const imgY2 = (drawing.y2 ?? drawing.y) * img.height;
 
           const finalX = imgX - drawX;
           const finalY = imgY - drawY;
@@ -411,8 +374,9 @@ const Editor = () => {
       }
 
       // Final canvas: apply rotation and flip by drawing the temp canvas into the final canvas with transforms
-      const finalW = (rotation % 180 === 0) ? temp.width : temp.height;
-      const finalH = (rotation % 180 === 0) ? temp.height : temp.width;
+      const output = getOutputSize(temp.width, temp.height, rotation);
+      const finalW = output.width;
+      const finalH = output.height;
 
       canvas.width = finalW;
       canvas.height = finalH;
@@ -431,6 +395,11 @@ const Editor = () => {
       link.download = `PixieEdit_${Date.now()}.jpg`;
       link.href = dataUrl;
       link.click();
+      setIsExporting(false);
+    };
+    img.onerror = () => {
+      setEditorError('The image could not be prepared for export.');
+      setIsExporting(false);
     };
   };
 
@@ -461,36 +430,37 @@ const Editor = () => {
             </button>
             <button 
                 onClick={() => {
-                   resetAdjustments();
-                   setCrop(undefined);
+                   setPreAutoAdjustments(null);
+                   dispatchEdit({ type: 'reset' });
+                   markupState.clear();
                 }}
                 className="px-4 py-2 text-primary font-medium text-sm hover:bg-primary/10 rounded-full transition-colors"
             >
                 Reset
             </button>
             <button 
-              onClick={() => setRotation((r) => (r + 270) % 360)}
+              onClick={() => dispatchEdit({ type: 'set-rotation', rotation: ((rotation + 270) % 360) as Rotation })}
               title="Rotate left"
               className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-variant transition-colors shrink-0"
             >
               <span className="material-symbols-rounded">rotate_left</span>
             </button>
             <button 
-              onClick={() => setRotation((r) => (r + 90) % 360)}
+              onClick={() => dispatchEdit({ type: 'set-rotation', rotation: ((rotation + 90) % 360) as Rotation })}
               title="Rotate right"
               className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-variant transition-colors shrink-0"
             >
               <span className="material-symbols-rounded">rotate_right</span>
             </button>
             <button 
-              onClick={() => setFlipH((v) => !v)}
+              onClick={() => dispatchEdit({ type: 'set-flip', axis: 'horizontal', value: !flipH })}
               title="Flip horizontal"
               className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-variant transition-colors shrink-0"
             >
               <span className="material-symbols-rounded">swap_horiz</span>
             </button>
             <button 
-              onClick={() => setFlipV((v) => !v)}
+              onClick={() => dispatchEdit({ type: 'set-flip', axis: 'vertical', value: !flipV })}
               title="Flip vertical"
               className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-variant transition-colors shrink-0"
             >
@@ -498,12 +468,14 @@ const Editor = () => {
             </button>
             <button 
               onClick={handleExport}
-              className="px-6 py-2 bg-primary rounded-full text-on-primary font-medium shadow-sm hover:brightness-110 active:scale-95 transition-all text-sm lg:text-base"
+              disabled={isExporting}
+              className="px-6 py-2 bg-primary rounded-full text-on-primary font-medium shadow-sm hover:brightness-110 active:scale-95 transition-all text-sm lg:text-base disabled:opacity-50"
             >
-              Save copy
+              {isExporting ? 'Saving…' : 'Save copy'}
             </button>
         </div>
       </header>
+      {editorError && <div role="alert" className="bg-error/20 text-error px-4 py-2 text-center text-sm">{editorError}</div>}
 
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 w-full">
         {/* Image Preview Area */}
@@ -520,13 +492,13 @@ const Editor = () => {
                    transition: 'transform 0.25s ease',
                 }}
               >
-                <img 
+                <ProcessedImage
                   ref={imageRef}
                   onLoad={handleImageLoad}
                   src={imageUrl} 
                   alt="Edit preview" 
+                  spec={renderSpec}
                   className={`w-full h-full block transition-all duration-300 ${activeTab === 'crop' ? 'opacity-50' : ''}`}
-                  style={filterStyle}
                 />
                 
                 {/* Crop Overlay */}
@@ -654,14 +626,15 @@ const Editor = () => {
                                             <span className="text-xs font-medium uppercase tracking-wider">{tool.label}</span>
                                         </div>
                                         <span className="text-sm font-mono font-medium">
-                                             {tool.id === 'warmth' ? adjustments[tool.id as AdjustmentKey] : (adjustments[tool.id as AdjustmentKey] - 100)}
+                                             {adjustments[tool.id] - tool.neutral}
                                         </span>
                                     </div>
                                     <input 
                                         type="range" 
-                                        min={tool.id === 'warmth' ? "-50" : "0"} 
-                                        max={tool.id === 'warmth' ? "50" : "200"} 
-                                        value={adjustments[tool.id as AdjustmentKey]}
+                                        min={tool.min}
+                                        max={tool.max}
+                                        aria-label={tool.label}
+                                        value={adjustments[tool.id]}
                                         onChange={(e) => handleAdjustChange(tool.id, parseInt(e.target.value))}
                                         className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-surface-variant"
                                         style={{ accentColor: 'var(--color-primary)' }}
@@ -673,6 +646,18 @@ const Editor = () => {
 
                     {activeTab === 'suggestions' && (
                         <div className="grid grid-cols-1 gap-3">
+                            <button
+                                onClick={handleAutoEnhance}
+                                disabled={isAnalyzing}
+                                className="w-full py-4 bg-primary text-on-primary rounded-xl text-sm font-medium disabled:opacity-50"
+                            >
+                                {isAnalyzing ? 'Analyzing…' : 'Auto Enhance'}
+                            </button>
+                            {preAutoAdjustments && (
+                              <button onClick={revertAutoEnhance} className="w-full py-3 rounded-xl border border-outline/20 text-sm font-medium">
+                                Revert Auto
+                              </button>
+                            )}
                             {PRESET_PRESETS.map((preset) => (
                                 <button 
                                     key={preset} 
@@ -697,6 +682,33 @@ const Editor = () => {
                             >
                                 {markupState.markupEnabled ? 'Hide Drawing Tools' : 'Show Drawing Tools'}
                             </button>
+                        </div>
+                    )}
+
+                    {activeTab === 'crop' && !crop && (
+                        <button
+                            onClick={startCrop}
+                            className="w-full py-4 px-4 rounded-2xl bg-primary text-on-primary font-medium transition-all hover:brightness-110"
+                        >
+                            Start cropping
+                        </button>
+                    )}
+
+                    {activeTab === 'filters' && (
+                        <div className="grid grid-cols-2 gap-3">
+                            {FILTERS.map((item) => (
+                                <button
+                                    key={item.id}
+                                    onClick={() => dispatchEdit({ type: 'set-filter', filter: item.id })}
+                                    aria-pressed={filter === item.id}
+                                    className={`overflow-hidden rounded-xl border transition-all ${filter === item.id ? 'border-primary bg-primary-container text-on-primary-container' : 'border-outline/20 bg-surface-variant/20'}`}
+                                >
+                                    <div className="relative h-16 w-full overflow-hidden">
+                                      <ProcessedImage src={imageUrl} alt="" maxPreviewSize={160} spec={createRenderSpec(normalizeEdits({ ...edits, filter: item.id }))} className="h-full w-full object-cover" />
+                                    </div>
+                                    <span className="block py-2 text-xs font-medium">{item.label}</span>
+                                </button>
+                            ))}
                         </div>
                     )}
 
@@ -731,6 +743,12 @@ const Editor = () => {
                                     </div>
                                 );
                             })}
+                            <button
+                                onClick={() => dispatchEdit({ type: 'set-crop' })}
+                                className="w-full py-3 px-4 rounded-2xl bg-surface-variant/30 font-medium transition-all hover:bg-surface-variant/50"
+                            >
+                                Remove crop
+                            </button>
                         </div>
                     )}
                 </div>
@@ -748,13 +766,14 @@ const Editor = () => {
                     <div className="flex justify-between items-center">
                         <span className="text-xs font-medium uppercase tracking-wider opacity-70 italic">{activeAdjustTool}</span>
                         <span className="text-sm font-mono font-medium">
-                            {activeAdjustTool === 'warmth' ? adjustments[activeAdjustTool] : (adjustments[activeAdjustTool] - 100)}
+                            {adjustments[activeAdjustTool] - activeAdjustConfig.neutral}
                         </span>
                     </div>
                     <input 
                         type="range" 
-                        min={activeAdjustTool === 'warmth' ? "-50" : "0"} 
-                        max={activeAdjustTool === 'warmth' ? "50" : "200"} 
+                        min={activeAdjustConfig.min}
+                        max={activeAdjustConfig.max}
+                        aria-label={activeAdjustConfig.label}
                         value={adjustments[activeAdjustTool]}
                         onChange={(e) => handleAdjustChange(activeAdjustTool, parseInt(e.target.value))}
                         className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-surface-variant transition-all hover:h-2"
@@ -765,6 +784,16 @@ const Editor = () => {
             
             {activeTab === 'suggestions' && (
                 <div className="flex gap-3 overflow-x-auto no-scrollbar py-2">
+                    <button
+                        onClick={handleAutoEnhance}
+                        disabled={isAnalyzing}
+                        className="min-w-28 aspect-video bg-primary text-on-primary rounded-lg text-xs font-medium disabled:opacity-50"
+                    >
+                        {isAnalyzing ? 'Analyzing…' : 'Auto Enhance'}
+                    </button>
+                    {preAutoAdjustments && (
+                      <button onClick={revertAutoEnhance} className="min-w-24 aspect-video border border-outline/20 rounded-lg text-xs font-medium">Revert Auto</button>
+                    )}
                     {PRESET_PRESETS.map((preset) => (
                         <button 
                             key={preset} 
@@ -790,6 +819,30 @@ const Editor = () => {
                 </button>
             )}
 
+            {activeTab === 'crop' && !crop && (
+                <button
+                    onClick={startCrop}
+                    className="w-full py-3 px-4 rounded-xl bg-primary text-on-primary font-medium"
+                >
+                    Start cropping
+                </button>
+            )}
+
+            {activeTab === 'filters' && (
+                <div className="flex gap-2 overflow-x-auto no-scrollbar py-2">
+                    {FILTERS.map((item) => (
+                        <button
+                            key={item.id}
+                        onClick={() => dispatchEdit({ type: 'set-filter', filter: item.id })}
+                            aria-pressed={filter === item.id}
+                            className={`min-w-20 rounded-xl px-3 py-3 text-xs font-medium ${filter === item.id ? 'bg-primary text-on-primary' : 'bg-surface-variant/30'}`}
+                        >
+                            {item.label}
+                        </button>
+                    ))}
+                </div>
+            )}
+
             {activeTab === 'crop' && crop && (
                 <div className="flex gap-2 overflow-x-auto no-scrollbar py-2">
                     {CROP_TOOLS_MOBILE.map((ctrl) => (
@@ -810,6 +863,12 @@ const Editor = () => {
                             />
                         </div>
                     ))}
+                    <button
+                        onClick={() => dispatchEdit({ type: 'set-crop' })}
+                        className="min-w-24 rounded-xl bg-surface-variant/30 px-3 text-xs font-medium"
+                    >
+                        Remove
+                    </button>
                 </div>
             )}
         </div>

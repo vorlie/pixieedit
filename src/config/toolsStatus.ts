@@ -32,8 +32,7 @@ export const TOOLS_STATUS: ToolStatusInfo[] = [
   {
     id: 'filters',
     name: 'Filters',
-    status: 'in-development',
-    note: 'Coming soon',
+    status: 'stable',
   },
 ];
 

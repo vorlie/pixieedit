@@ -1,8 +1,15 @@
 export const ADJUSTMENT_TOOLS = [
-  { id: 'brightness', label: 'Brightness', icon: 'light_mode' },
-  { id: 'contrast', label: 'Contrast', icon: 'contrast' },
-  { id: 'saturation', label: 'Saturation', icon: 'invert_colors' },
-  { id: 'warmth', label: 'Warmth', icon: 'thermostat' },
+  { id: 'exposure', label: 'Exposure', icon: 'exposure', min: -200, max: 200, neutral: 0, suffix: '' },
+  { id: 'brightness', label: 'Brightness', icon: 'light_mode', min: 0, max: 200, neutral: 100, suffix: '' },
+  { id: 'contrast', label: 'Contrast', icon: 'contrast', min: 0, max: 200, neutral: 100, suffix: '' },
+  { id: 'highlights', label: 'Highlights', icon: 'wb_sunny', min: -100, max: 100, neutral: 0, suffix: '' },
+  { id: 'shadows', label: 'Shadows', icon: 'brightness_3', min: -100, max: 100, neutral: 0, suffix: '' },
+  { id: 'saturation', label: 'Saturation', icon: 'invert_colors', min: 0, max: 200, neutral: 100, suffix: '' },
+  { id: 'vibrance', label: 'Vibrance', icon: 'palette', min: -100, max: 100, neutral: 0, suffix: '' },
+  { id: 'temperature', label: 'Temperature', icon: 'thermostat', min: -100, max: 100, neutral: 0, suffix: '' },
+  { id: 'tint', label: 'Tint', icon: 'colorize', min: -100, max: 100, neutral: 0, suffix: '' },
+  { id: 'sharpness', label: 'Sharpness', icon: 'details', min: 0, max: 100, neutral: 0, suffix: '' },
+  { id: 'vignette', label: 'Vignette', icon: 'vignette', min: 0, max: 100, neutral: 0, suffix: '' },
 ] as const;
 
 export const CROP_TOOLS = [

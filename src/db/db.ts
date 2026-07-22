@@ -1,27 +1,6 @@
 import Dexie, { type Table } from 'dexie';
-
-export type AdjustmentKey = 'brightness' | 'contrast' | 'saturation' | 'warmth' | 'sharpness';
-
-export interface CropState {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export interface ImageEditState {
-  brightness: number;
-  contrast: number;
-  saturation: number;
-  warmth: number;
-  sharpness: number;
-  // rotation in degrees (0, 90, 180, 270)
-  rotation?: number;
-  // horizontal/vertical flip flags
-  flipH?: boolean;
-  flipV?: boolean;
-  crop?: CropState;
-}
+import { normalizeEdits, type ImageEditState } from '../editor/editModel';
+export type { AdjustmentKey, CropState, EditStateVersion, FilterId, ImageEditState, Rotation } from '../editor/editModel';
 
 export interface PixieImage {
   id?: number;
@@ -38,6 +17,20 @@ export class PixieDatabase extends Dexie {
     super('PixieEditDB');
     this.version(1).stores({
       images: '++id, timestamp' // Indexed fields
+    });
+    this.version(2).stores({
+      images: '++id, timestamp'
+    }).upgrade(async (transaction) => {
+      await transaction.table<PixieImage>('images').toCollection().modify((image) => {
+        image.edits = normalizeEdits(image.edits);
+      });
+    });
+    this.version(3).stores({
+      images: '++id, timestamp'
+    }).upgrade(async (transaction) => {
+      await transaction.table<PixieImage>('images').toCollection().modify((image) => {
+        image.edits = normalizeEdits(image.edits);
+      });
     });
   }
 }

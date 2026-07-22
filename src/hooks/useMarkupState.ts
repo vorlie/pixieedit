@@ -1,18 +1,7 @@
 import { useState, useCallback } from 'react';
+import type { MarkupDrawing, MarkupTool } from '../editor/editModel';
 
-export type MarkupTool = 'circle' | 'rectangle' | 'line' | 'text';
-
-export interface DrawingAction {
-  type: 'draw';
-  tool: MarkupTool;
-  x: number;
-  y: number;
-  x2?: number;
-  y2?: number;
-  color: string;
-  strokeWidth: number;
-  text?: string;
-}
+export type DrawingAction = MarkupDrawing;
 
 export interface MarkupState {
   isDrawing: boolean;
@@ -41,6 +30,10 @@ export const useMarkupState = () => {
     setDrawings([]);
   }, []);
 
+  const replaceDrawings = useCallback((next: DrawingAction[]) => {
+    setDrawings(next.map((drawing) => ({ ...drawing })));
+  }, []);
+
   const startDrawing = useCallback((x: number, y: number) => {
     setIsDrawing(true);
     setStartPos({ x, y });
@@ -63,6 +56,7 @@ export const useMarkupState = () => {
     addDrawing,
     undo,
     clear,
+    replaceDrawings,
     isDrawing,
     startDrawing,
     stopDrawing,

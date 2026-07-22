@@ -6,7 +6,6 @@ const useDominantColor = (imageUrl: string | null) => {
 
   useEffect(() => {
     if (!imageUrl) {
-      setColor(null);
       return;
     }
 
@@ -31,7 +30,7 @@ const useDominantColor = (imageUrl: string | null) => {
     };
   }, [imageUrl]);
 
-  return color;
+  return imageUrl ? color : null;
 };
 
 export default useDominantColor;

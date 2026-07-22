@@ -1,33 +1,49 @@
 import { useNavigate } from 'react-router-dom';
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
+import { createDefaultEdits } from '../editor/editModel';
+
+const Thumbnail = ({ blob, onClick }: { blob: Blob; onClick: () => void }) => {
+  const url = useMemo(() => URL.createObjectURL(blob), [blob]);
+  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  return <img onClick={onClick} src={url} alt="Imported photo" className="w-full h-full object-cover" />;
+};
 
 const Library = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showNotice, setShowNotice] = useState(() => !localStorage.getItem('pixie_notice_dismissed'));
+  const [importError, setImportError] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
   
   // Fetch images from Dexie
   const images = useLiveQuery(() => db.images.orderBy('timestamp').reverse().toArray());
 
   const generateThumbnail = (file: File): Promise<Blob> => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const img = new Image();
-      img.src = URL.createObjectURL(file);
+      const url = URL.createObjectURL(file);
+      img.src = url;
       img.onload = () => {
+        URL.revokeObjectURL(url);
         const canvas = document.createElement('canvas');
         const MAX_WIDTH = 400;
-        const scaleSize = MAX_WIDTH / img.width;
-        canvas.width = MAX_WIDTH;
-        canvas.height = img.height * scaleSize;
+        const scaleSize = Math.min(1, MAX_WIDTH / img.width);
+        canvas.width = Math.max(1, Math.round(img.width * scaleSize));
+        canvas.height = Math.max(1, Math.round(img.height * scaleSize));
 
         const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+        if (!ctx) return reject(new Error('Canvas is unavailable'));
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
         canvas.toBlob((blob) => {
-          if (blob) resolve(blob);
+          if (blob) resolve(blob); else reject(new Error('Thumbnail encoding failed'));
         }, 'image/jpeg', 0.7);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Unsupported or damaged image'));
       };
     });
   };
@@ -35,22 +51,18 @@ const Library = () => {
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      const thumbnailBlob = await generateThumbnail(file);
-      
-      const newImageId = await db.images.add({
-        originalBlob: file,
-        thumbnailBlob: thumbnailBlob,
-        edits: {
-          brightness: 100,
-          contrast: 100,
-          saturation: 100,
-          warmth: 0,
-          sharpness: 0,
-        },
-        timestamp: Date.now(),
-      });
-
-      navigate('/editor', { state: { imageId: newImageId } });
+      setImportError('');
+      setIsImporting(true);
+      try {
+        const thumbnailBlob = await generateThumbnail(file);
+        const newImageId = await db.images.add({ originalBlob: file, thumbnailBlob, edits: createDefaultEdits(), timestamp: Date.now() });
+        navigate(`/editor?id=${newImageId}`);
+      } catch (error) {
+        setImportError(error instanceof Error ? error.message : 'The image could not be imported.');
+      } finally {
+        setIsImporting(false);
+        event.target.value = '';
+      }
     }
   };
 
@@ -87,12 +99,14 @@ const Library = () => {
       <div className="flex-1 flex flex-col min-w-0">
         <header className="px-6 py-4 flex items-center justify-between lg:hidden border-b border-outline/5">
           <h1 className="text-2xl font-sans font-medium tracking-tight">Photos</h1>
+          {isImporting && <span className="text-xs opacity-60">Importing…</span>}
         </header>
 
         {/* Desktop Header */}
         <header className="hidden lg:flex px-8 py-6 items-center justify-between border-b border-outline/5">
            <h1 className="text-2xl font-sans font-medium tracking-tight opacity-50">All Photos</h1>
         </header>
+        {importError && <div role="alert" className="mx-4 mt-3 rounded-xl bg-error/20 px-4 py-3 text-sm text-error">{importError}</div>}
         
         <main className="flex-1 px-4 lg:px-8 py-6 grid grid-cols-3 md:grid-cols-6 lg:grid-cols-6 xl:grid-cols-8 gap-1 overflow-y-auto content-start">
           {/* Add Photo Button (Mobile) */}
@@ -118,12 +132,7 @@ const Library = () => {
                 key={img.id} 
                 className="aspect-square bg-surface-variant cursor-pointer transition-all hover:scale-[0.98] active:scale-95 group relative overflow-hidden rounded-sm lg:rounded-md"
             >
-              <img 
-                onClick={() => navigate('/editor', { state: { imageId: img.id } })}
-                src={URL.createObjectURL(img.thumbnailBlob)} 
-                alt="Captured" 
-                className="w-full h-full object-cover"
-              />
+              <Thumbnail blob={img.thumbnailBlob} onClick={() => navigate(`/editor?id=${img.id}`)} />
               <button 
                 onClick={(e) => {
                   e.stopPropagation();

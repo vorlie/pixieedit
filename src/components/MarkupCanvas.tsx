@@ -11,6 +11,12 @@ export const MarkupCanvas = ({ imageRef, containerRef, markupState }: MarkupCanv
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const drawAction = useCallback((ctx: CanvasRenderingContext2D, action: DrawingAction) => {
+    const width = ctx.canvas.width;
+    const height = ctx.canvas.height;
+    const x = action.x * width;
+    const y = action.y * height;
+    const x2 = (action.x2 ?? action.x) * width;
+    const y2 = (action.y2 ?? action.y) * height;
     ctx.strokeStyle = action.color;
     ctx.fillStyle = action.color;
     ctx.lineWidth = action.strokeWidth;
@@ -20,32 +26,29 @@ export const MarkupCanvas = ({ imageRef, containerRef, markupState }: MarkupCanv
     switch (action.tool) {
       case 'circle': {
         const radius = Math.sqrt(
-          Math.pow(action.x2! - action.x, 2) + Math.pow(action.y2! - action.y, 2)
+          Math.pow(x2 - x, 2) + Math.pow(y2 - y, 2)
         );
         ctx.beginPath();
-        ctx.arc(action.x, action.y, radius, 0, 2 * Math.PI);
+        ctx.arc(x, y, radius, 0, 2 * Math.PI);
         ctx.stroke();
         break;
       }
       case 'rectangle': {
         ctx.strokeRect(
-          action.x,
-          action.y,
-          action.x2! - action.x,
-          action.y2! - action.y
+          x, y, x2 - x, y2 - y
         );
         break;
       }
       case 'line': {
         ctx.beginPath();
-        ctx.moveTo(action.x, action.y);
-        ctx.lineTo(action.x2!, action.y2!);
+        ctx.moveTo(x, y);
+        ctx.lineTo(x2, y2);
         ctx.stroke();
         break;
       }
       case 'text': {
         ctx.font = `${action.strokeWidth * 4}px Arial`;
-        ctx.fillText(action.text || '', action.x, action.y);
+        ctx.fillText(action.text || '', x, y);
         break;
       }
     }
@@ -157,8 +160,8 @@ export const MarkupCanvas = ({ imageRef, containerRef, markupState }: MarkupCanv
         markupState.addDrawing({
           type: 'draw',
           tool: 'text',
-          x: markupState.startPos.x,
-          y: markupState.startPos.y,
+          x: markupState.startPos.x / rect.width,
+          y: markupState.startPos.y / rect.height,
           color: markupState.markupColor,
           strokeWidth: markupState.strokeWidth,
           text,
@@ -168,10 +171,10 @@ export const MarkupCanvas = ({ imageRef, containerRef, markupState }: MarkupCanv
       markupState.addDrawing({
         type: 'draw',
         tool: markupState.activeTool,
-        x: markupState.startPos.x,
-        y: markupState.startPos.y,
-        x2: x,
-        y2: y,
+        x: markupState.startPos.x / rect.width,
+        y: markupState.startPos.y / rect.height,
+        x2: x / rect.width,
+        y2: y / rect.height,
         color: markupState.markupColor,
         strokeWidth: markupState.strokeWidth,
       });
